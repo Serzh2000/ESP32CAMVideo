@@ -3,22 +3,22 @@
 #include <WebServer.h>
 #include "Config.h"
 
-// Globals for Captive Portal (internal to this unit)
+// Глобальные переменные для Captive Portal (внутренние для этого модуля)
 DNSServer dnsServer;
 WebServer server(80);
 
 void startCaptivePortal(Preferences &prefs) {
-  Serial.println("Starting Captive Portal...");
+  Serial.println("Запуск Captive Portal...");
   WiFi.disconnect();
   WiFi.mode(WIFI_AP);
   WiFi.softAP("ESP32-CAM-Setup");
-  Serial.print("AP IP address: ");
+  Serial.print("IP адрес точки доступа: ");
   Serial.println(WiFi.softAPIP());
 
-  // Setup DNS to redirect all domains to ESP32
+  // Настройка DNS для перенаправления всех доменов на ESP32
   dnsServer.start(53, "*", WiFi.softAPIP());
 
-  // Setup Web Server
+  // Настройка веб-сервера
   server.on("/", HTTP_GET, []() {
     String html = "<html><head><meta name='viewport' content='width=device-width, initial-scale=1.0, user-scalable=no'>";
     html += "<meta charset='UTF-8'>";
@@ -36,14 +36,8 @@ void startCaptivePortal(Preferences &prefs) {
     server.send(200, "text/html", html);
   });
 
-  // We need to capture preferences reference in lambda? 
-  // Lambdas with captures cannot be converted to function pointers used by WebServer?
-  // Actually WebServer.on takes std::function or similar, so capture is fine.
-  // But wait, 'prefs' is a reference passed to startCaptivePortal. 
-  // It might be unsafe to capture it by reference if startCaptivePortal returns. 
-  // BUT startCaptivePortal contains a while(true) loop, so it never returns.
-  // So capturing by reference is safe.
-  
+  // Обработчик сохранения настроек
+  // Захватываем ссылку на prefs (безопасно, так как startCaptivePortal не возвращает управление)
   server.on("/save", HTTP_POST, [&prefs]() {
     String s = server.arg("s");
     String p = server.arg("p");
@@ -63,22 +57,22 @@ void startCaptivePortal(Preferences &prefs) {
     }
   });
 
-  // Redirect all other requests to captive portal
+  // Перенаправление всех остальных запросов на главную страницу (Captive Portal)
   server.onNotFound([]() {
     server.sendHeader("Location", "/", true);
     server.send(302, "text/plain", "");
   });
 
   server.begin();
-  Serial.println("Web server started. Waiting for configuration...");
+  Serial.println("Веб-сервер запущен. Ожидание настройки...");
   
-  // Blink loop (Blocking)
+  // Бесконечный цикл обработки (Блокирующий)
   while(true) {
     dnsServer.processNextRequest();
     server.handleClient();
     
     static unsigned long lastBlink = 0;
-    if (millis() - lastBlink > 200) { // Fast blink for AP mode
+    if (millis() - lastBlink > 200) { // Быстрое мигание в режиме точки доступа
         lastBlink = millis();
         digitalWrite(LED_GPIO_NUM, !digitalRead(LED_GPIO_NUM));
     }

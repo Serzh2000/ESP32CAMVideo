@@ -1,6 +1,6 @@
 /*
-  ESP32-CAM Telegram Video Recorder (AVI/MJPEG to SD Card)
-  Modularized Version
+  ESP32-CAM Telegram Video Recorder
+  Модульная версия
 */
 
 #include <WiFi.h>
@@ -13,7 +13,7 @@
 #include "SD_MMC.h"
 #include "FS.h"
 
-// Modules
+// Подключаем наши модули
 #include "Config.h"
 #include "AviUtils.h"
 #include "WifiManager.h"
@@ -21,74 +21,78 @@
 #include "VideoRecorder.h"
 
 // ==========================================
-// GLOBALS & CONFIG
+// ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ И НАСТРОЙКИ
 // ==========================================
 
-// Runtime Variables
+// Переменные времени выполнения
 String ssid = "";
 String password = "";
 
-// Recording Settings
+// Настройки записи (загружаются из памяти)
 int recordDuration = DEFAULT_RECORD_DURATION;
 int fps = DEFAULT_FPS;
 int jpegQuality = DEFAULT_JPEG_QUALITY;
 framesize_t frameSize = DEFAULT_FRAME_SIZE;
+int flashBrightness = DEFAULT_FLASH_BRIGHTNESS;
 
-// State
-bool isRecordingActive = false;
-unsigned long lastBotCheckTime = 0;
+// Состояние
+bool isRecordingActive = false; // Активна ли циклическая запись
+unsigned long lastBotCheckTime = 0; // Время последней проверки сообщений
 
-Preferences preferences;
+Preferences preferences; // Объект для сохранения настроек в энергонезависимую память
 
 // ==========================================
-// SETUP
+// НАСТРОЙКА (SETUP)
 // ==========================================
 void setup() {
-  // Power stabilization delay
+  // Задержка для стабилизации питания при старте
   delay(2000);
 
   Serial.begin(115200);
-  Serial.println("\n\n--- ESP32-CAM Video Recorder Starting ---");
+  Serial.println("\n\n--- ESP32-CAM Video Recorder Запуск ---");
   
+  // Настройка красного светодиода (индикатор работы)
   pinMode(LED_GPIO_NUM, OUTPUT);
-  digitalWrite(LED_GPIO_NUM, HIGH); // Off
+  digitalWrite(LED_GPIO_NUM, HIGH); // Выкл (инвертированная логика)
   
-  // 1. Initialize Preferences
+  // 1. Инициализация хранилища настроек (Preferences)
   preferences.begin("cam_config", false);
   
-  // Load saved settings
+  // Загрузка сохраненных настроек WiFi
   String savedSSID = preferences.getString("ssid", "");
   String savedPass = preferences.getString("pass", "");
   if (savedSSID != "") {
     ssid = savedSSID;
     password = savedPass;
-    Serial.println("Loaded WiFi creds from preferences");
+    Serial.println("Загружены настройки WiFi из памяти");
   }
   
+  // Загрузка ID чата и параметров записи
   chatId = preferences.getString("chatId", "");
-  if (chatId != "") Serial.println("Loaded ChatID: " + chatId);
+  if (chatId != "") Serial.println("Загружен ChatID: " + chatId);
   
   recordDuration = preferences.getInt("duration", DEFAULT_RECORD_DURATION);
   fps = preferences.getInt("fps", DEFAULT_FPS);
+  flashBrightness = preferences.getInt("flash", DEFAULT_FLASH_BRIGHTNESS);
   
-  // 2. Initialize SD Card
-  Serial.println("Initializing SD Card...");
+  // 2. Инициализация SD карты
+  Serial.println("Инициализация SD карты...");
   
-  // Hardware fix for SD Card stability (Error 0x107)
-  // Set pins to known state before driver init
+  // Аппаратный фикс для стабильности SD карты (предотвращает ошибку 0x107)
+  // Устанавливаем пины в известное состояние перед инициализацией драйвера
   pinMode(14, INPUT_PULLUP); // CLK
   pinMode(15, INPUT_PULLUP); // CMD
   pinMode(2, INPUT_PULLUP);  // D0
-  pinMode(4, OUTPUT);        // Flash LED - Force OFF
+  pinMode(4, OUTPUT);        // Flash LED - Принудительно выключаем
   digitalWrite(4, LOW);
-  pinMode(12, INPUT_PULLUP); // D2 (Unused in 1-bit)
-  pinMode(13, INPUT_PULLUP); // D3 (Unused in 1-bit)
+  pinMode(12, INPUT_PULLUP); // D2 (Не используется в 1-битном режиме)
+  pinMode(13, INPUT_PULLUP); // D3 (Не используется в 1-битном режиме)
 
-  if (!SD_MMC.begin("/sdcard", true)) { // 1-bit mode
+  if (!SD_MMC.begin("/sdcard", true)) { // true = 1-битный режим (освобождает пины для вспышки)
     Serial.println("Ошибка монтирования SD карты (SD Card Mount Failed)");
     Serial.println("Попытка 2 через 1 сек...");
     
-    // Retry once with delay
+    // Повторная попытка через секунду
     delay(1000);
     if (!SD_MMC.begin("/sdcard", true)) {
       Serial.println("Критическая ошибка: SD карта не найдена или не читается.");
@@ -98,7 +102,7 @@ void setup() {
       Serial.println("Система остановлена.");
       
       while(true) {
-        // Fast error blink
+        // Быстрое мигание при ошибке
         digitalWrite(LED_GPIO_NUM, !digitalRead(LED_GPIO_NUM));
         delay(100);
       }
@@ -107,12 +111,12 @@ void setup() {
   
   uint8_t cardType = SD_MMC.cardType();
   if (cardType == CARD_NONE) {
-    Serial.println("No SD Card attached");
+    Serial.println("SD карта не вставлена");
     return;
   }
-  Serial.printf("SD Card Size: %lluMB\n", SD_MMC.cardSize() / (1024 * 1024));
+  Serial.printf("Размер SD карты: %lluMB\n", SD_MMC.cardSize() / (1024 * 1024));
   
-  // 3. Initialize Camera
+  // 3. Инициализация Камеры
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -136,35 +140,37 @@ void setup() {
   config.pixel_format = PIXFORMAT_JPEG;
   config.frame_size = frameSize;
   config.jpeg_quality = jpegQuality;
-  config.fb_count = 2; // Double buffering
+  config.fb_count = 2; // Двойная буферизация для плавности
   
+  // Проверка наличия PSRAM (доп. память)
   if (psramFound()) {
-    Serial.println("PSRAM found");
+    Serial.println("PSRAM найдена (это хорошо)");
     config.fb_count = 2;
   } else {
-    Serial.println("PSRAM not found");
+    Serial.println("PSRAM не найдена (будет тормозить)");
     config.fb_count = 1;
   }
   
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
-    Serial.printf("Camera init failed with error 0x%x", err);
+    Serial.printf("Ошибка инициализации камеры: 0x%x", err);
     return;
   }
   
-  // 4. Connect to WiFi
+  // 4. Подключение к WiFi
   if (ssid == "") {
-    Serial.println("No WiFi credentials. Starting Captive Portal...");
-    startCaptivePortal(preferences);
+    Serial.println("Нет сохраненных настроек WiFi. Запуск режима точки доступа (Captive Portal)...");
+    startCaptivePortal(preferences); // Это заблокирует выполнение до сохранения настроек
   }
 
-  Serial.printf("Connecting to %s...\n", ssid.c_str());
+  Serial.printf("Подключение к WiFi: %s...\n", ssid.c_str());
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid.c_str(), password.c_str());
   
   unsigned long startAttempt = millis();
   bool wifiConnected = false;
-  while(millis() - startAttempt < 20000) { // 20s timeout
+  // Ждем подключения 20 секунд
+  while(millis() - startAttempt < 20000) { 
     if (WiFi.status() == WL_CONNECTED) {
       wifiConnected = true;
       break;
@@ -174,58 +180,70 @@ void setup() {
   }
   
   if (wifiConnected) {
-    Serial.println("\nWiFi connected");
-    Serial.print("IP address: ");
+    Serial.println("\nWiFi подключен успешно");
+    Serial.print("IP адрес: ");
     Serial.println(WiFi.localIP());
     
-    // Secure client setup for Bot
+    // Настройка безопасного клиента для Telegram (без проверки сертификата)
     client.setInsecure();
+    client.setHandshakeTimeout(30000); // Тайм-аут рукопожатия 30 сек
     
-    // Send startup message
-    logToBot("Бот запущен. Готов к записи.");
+    // Ждем немного для стабилизации сети
+    delay(2000);
+    
+    // Настройка PWM для фонарика
+    // ESP32 Arduino Core v3.0+ использует ledcAttach(pin, freq, res)
+    ledcAttach(FLASH_GPIO_NUM, FLASH_LEDC_FREQ, FLASH_LEDC_RES);
+    ledcWrite(FLASH_GPIO_NUM, flashBrightness);
+
+    // Отправка приветственного сообщения
+    logToBot("Бот запущен. Готов к работе.");
     if (chatId == "") {
-      Serial.println("ChatID not set. Send /start to bot.");
+      Serial.println("ChatID не установлен. Отправьте /start боту.");
     }
   } else {
-    Serial.println("\nWiFi Connect Failed. Starting Captive Portal...");
-    startCaptivePortal(preferences); // This is blocking and will restart ESP on save
+    Serial.println("\nНе удалось подключиться к WiFi. Запуск режима настройки (Captive Portal)...");
+    startCaptivePortal(preferences); // Запуск точки доступа для ввода новых данных
   }
 }
 
 // ==========================================
-// LOOP
+// ГЛАВНЫЙ ЦИКЛ (LOOP)
 // ==========================================
 void loop() {
   unsigned long now = millis();
   
-  // 1. Check for Bot Commands
-  if (now - lastBotCheckTime > 3000) { // Check every 3s
+  // 1. Проверка команд от Бота
+  if (now - lastBotCheckTime > 3000) { // Проверяем каждые 3 секунды
     lastBotCheckTime = now;
     if (WiFi.status() == WL_CONNECTED) {
       int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
       if (numNewMessages > 0) {
-        handleNewMessages(numNewMessages, isRecordingActive, recordDuration, fps, jpegQuality, frameSize, preferences);
+        // Обработка входящих сообщений
+        handleNewMessages(numNewMessages, isRecordingActive, recordDuration, fps, jpegQuality, frameSize, flashBrightness, preferences);
       }
     }
   }
   
-  // 2. Recording Cycle
+  // 2. Цикл записи видео
   if (isRecordingActive) {
+    // Запись видео файла
     String savedFile = recordVideo(recordDuration, fps, ssid, password);
     
     if (savedFile != "") {
+      // Отправка в Telegram
       bool sent = sendVideoToTelegram(savedFile);
       if (sent) {
         logToBot("Видео успешно отправлено.");
-        // Optional: Delete file after send
+        // Удаляем файл с карты памяти после успешной отправки, чтобы не забивать место
         SD_MMC.remove(savedFile); 
       } else {
         logToBot("Не удалось отправить видео.");
       }
     }
     
-    // Loop continues immediately for next recording
+    // Цикл продолжается сразу же (loop() перезапустится)
   }
   
-  yield();
+  yield(); // Даем время системным процессам WiFi
 }

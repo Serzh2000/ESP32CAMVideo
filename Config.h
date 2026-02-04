@@ -26,18 +26,21 @@
 #define LED_GPIO_NUM      33 // Red LED on back of board (Inverted logic: LOW = ON)
 
 // ==========================================
-// DEFAULTS
+// НАСТРОЙКИ ПО УМОЛЧАНИЮ
 // ==========================================
-#define DEFAULT_RECORD_DURATION 300 // 5 minutes
-#define DEFAULT_FPS 10
-#define DEFAULT_JPEG_QUALITY 12
-#define DEFAULT_FRAME_SIZE FRAMESIZE_QVGA
-#define MAX_FILE_SIZE_MB 45 // Leave room for 50MB limit
+#define DEFAULT_RECORD_DURATION 300 // Длительность записи в секундах (300с = 5 мин)
+#define DEFAULT_FPS 10              // Кадров в секунду (рекомендуется 10-25)
+#define DEFAULT_JPEG_QUALITY 12     // Качество JPEG (10-63, меньше = лучше, но больше файл)
+#define DEFAULT_FRAME_SIZE FRAMESIZE_QVGA // Разрешение (QVGA=320x240, VGA=640x480)
+#define MAX_FILE_SIZE_MB 45         // Макс размер файла (Telegram лимит 50MB)
+#define DEFAULT_FLASH_BRIGHTNESS 0  // Яркость вспышки при старте (0-255)
+#define FLASH_LEDC_CHANNEL 2        // Канал PWM для вспышки
+#define FLASH_LEDC_FREQ 5000        // Частота PWM
+#define FLASH_LEDC_RES 8            // Разрешение PWM
 
 // ==========================================
-// CREDENTIALS
+// УЧЕТНЫЕ ДАННЫЕ
 // ==========================================
-// Define Bot Token here to ensure visibility across modules
-#define BOT_TOKEN "7952780114:AAHhgbLQ8o3CAIOdAZ2bl0WR4c28Ie2wqp8"
-
+// Токен вашего Telegram бота (получите у @BotFather)
+#define BOT_TOKEN "8061703653:AAF0D_mH6VgStlPhcDDvX0sWpU-ShGnifzw"
 #endif
